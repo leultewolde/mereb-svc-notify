@@ -7,6 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "clean": "rm -rf dist node_modules",
+    "lockfile:refresh": "node ./scripts/refresh-lockfile.mjs",
     "prebuild": "npm run prisma:generate",
     "pretypecheck": "npm run prisma:generate",
     "pretest:integration": "npm run prisma:generate",
