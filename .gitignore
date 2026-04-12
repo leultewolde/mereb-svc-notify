@@ -1,0 +1,24 @@
+# Node / build artifacts
+node_modules/
+dist/
+generated/
+coverage/
+tsconfig.tsbuildinfo
+
+# Logs & debug
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local env / editor files
+.env*
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.local
+
+# CI-generated local files
+.ci/.rendered/

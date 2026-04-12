@@ -1,0 +1,69 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
+}
+
+enum NotificationPermissionStatus {
+  UNKNOWN
+  GRANTED
+  DENIED
+  BLOCKED
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model NotificationPreference {
+  userId                 String   @id
+  directMessagesEnabled  Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model PushDeviceRegistration {
+  id               String                       @id @default(cuid())
+  userId           String
+  installationId   String
+  platform         String                       @db.VarChar(16)
+  expoPushToken    String                       @db.VarChar(255)
+  permissionStatus NotificationPermissionStatus @default(UNKNOWN)
+  appVersion       String?                      @db.VarChar(32)
+  lastSeenAt       DateTime                     @default(now())
+  disabledAt       DateTime?
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
+
+  @@unique([userId, installationId], map: "PushDeviceRegistration_userId_installationId_key")
+  @@index([userId, disabledAt], map: "PushDeviceRegistration_userId_disabledAt_idx")
+  @@index([expoPushToken], map: "PushDeviceRegistration_expoPushToken_idx")
+}
+
+model NotificationDelivery {
+  id               String                     @id @default(cuid())
+  eventId          String                     @db.VarChar(128)
+  userId           String
+  installationId   String
+  messageId        String                     @db.VarChar(128)
+  conversationId   String                     @db.VarChar(128)
+  notificationType String                     @db.VarChar(32)
+  expoPushToken    String                     @db.VarChar(255)
+  status           NotificationDeliveryStatus @default(PENDING)
+  expoTicketId     String?                    @db.VarChar(255)
+  error            String?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  sentAt           DateTime?
+
+  @@unique([eventId, installationId], map: "NotificationDelivery_eventId_installationId_key")
+  @@index([userId, createdAt], map: "NotificationDelivery_userId_createdAt_idx")
+  @@index([status, createdAt], map: "NotificationDelivery_status_createdAt_idx")
+}

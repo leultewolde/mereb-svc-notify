@@ -1,0 +1,25 @@
+replicaCount: 2
+
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+configMap:
+  data:
+    PORT: "4005"
+    KAFKA_BROKERS: platform-stg-redpanda-0.platform-stg-redpanda.platform-stg.svc.cluster.local:9092
+    KAFKA_SSL: "true"
+    KAFKA_SSL_INSECURE: "true"
+    OIDC_AUDIENCE: account
+    SPLUNK_HEC_URL: https://splunk-hec.mereb.app/services/collector/event
+    SPLUNK_HEC_INDEX: logs-stg
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false

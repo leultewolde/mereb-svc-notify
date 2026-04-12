@@ -1,0 +1,57 @@
+scalar FieldSet
+
+directive @external on FIELD_DEFINITION
+directive @provides(fields: FieldSet) on FIELD_DEFINITION
+directive @key(fields: FieldSet) repeatable on OBJECT | INTERFACE
+directive @extends on OBJECT | INTERFACE
+
+type _Service {
+  sdl: String
+}
+
+enum PushPlatform {
+  IOS
+  ANDROID
+}
+
+enum NotificationPermissionStatus {
+  UNKNOWN
+  GRANTED
+  DENIED
+  BLOCKED
+}
+
+type NotificationSettings {
+  directMessagesEnabled: Boolean!
+  updatedAt: String!
+}
+
+type PushDeviceRegistration {
+  installationId: ID!
+  platform: PushPlatform!
+  permissionStatus: NotificationPermissionStatus!
+  appVersion: String
+  lastSeenAt: String!
+}
+
+input UpsertPushDeviceInput {
+  installationId: ID!
+  expoPushToken: String!
+  platform: PushPlatform!
+  permissionStatus: NotificationPermissionStatus!
+  appVersion: String
+}
+
+type Query {
+  meNotificationSettings: NotificationSettings!
+}
+
+type Mutation {
+  upsertPushDevice(input: UpsertPushDeviceInput!): PushDeviceRegistration!
+  removePushDevice(installationId: ID!): Boolean!
+  updateNotificationSettings(directMessagesEnabled: Boolean!): NotificationSettings!
+}
+
+extend type Query {
+  _service: _Service!
+}
