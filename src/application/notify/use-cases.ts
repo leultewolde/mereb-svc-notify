@@ -1,4 +1,5 @@
 import type { GraphQLContext } from '../../context.js'
+import { createLogger } from '@mereb/shared-packages'
 import type {
   MessageNotificationEvent,
   NotificationSettingsRecord,
@@ -7,6 +8,8 @@ import type {
   PushSenderPort,
   UpsertPushDeviceInput
 } from './ports.js'
+
+const logger = createLogger('svc-notify-application')
 
 export class AuthenticationRequiredError extends Error {
   constructor(message = 'Authentication required') {
@@ -26,8 +29,14 @@ function requireAuth(ctx: GraphQLContext): string {
 export class GetMeNotificationSettingsQuery {
   constructor(private readonly repository: NotifyRepositoryPort) {}
 
-  execute(ctx: GraphQLContext): Promise<NotificationSettingsRecord> {
-    return this.repository.getNotificationSettings(requireAuth(ctx))
+  async execute(ctx: GraphQLContext): Promise<NotificationSettingsRecord> {
+    const userId = requireAuth(ctx)
+    const settings = await this.repository.getNotificationSettings(userId)
+    logger.info(
+      { userId, directMessagesEnabled: settings.directMessagesEnabled },
+      'Loaded notification settings'
+    )
+    return settings
   }
 }
 
@@ -38,7 +47,14 @@ export class UpdateNotificationSettingsUseCase {
     input: { directMessagesEnabled: boolean },
     ctx: GraphQLContext
   ): Promise<NotificationSettingsRecord> {
-    return this.repository.updateNotificationSettings(requireAuth(ctx), input)
+    const userId = requireAuth(ctx)
+    return this.repository.updateNotificationSettings(userId, input).then((settings) => {
+      logger.info(
+        { userId, directMessagesEnabled: settings.directMessagesEnabled },
+        'Updated notification settings'
+      )
+      return settings
+    })
   }
 }
 
@@ -49,7 +65,20 @@ export class UpsertPushDeviceUseCase {
     input: UpsertPushDeviceInput,
     ctx: GraphQLContext
   ): Promise<PushDeviceRegistrationRecord> {
-    return this.repository.upsertPushDevice(requireAuth(ctx), input)
+    const userId = requireAuth(ctx)
+    return this.repository.upsertPushDevice(userId, input).then((device) => {
+      logger.info(
+        {
+          userId,
+          installationId: device.installationId,
+          platform: device.platform,
+          permissionStatus: device.permissionStatus,
+          appVersion: device.appVersion
+        },
+        'Upserted push device'
+      )
+      return device
+    })
   }
 }
 
@@ -60,7 +89,14 @@ export class RemovePushDeviceUseCase {
     input: { installationId: string },
     ctx: GraphQLContext
   ): Promise<boolean> {
-    return this.repository.disablePushDevice(requireAuth(ctx), input.installationId)
+    const userId = requireAuth(ctx)
+    return this.repository.disablePushDevice(userId, input.installationId).then((removed) => {
+      logger.info(
+        { userId, installationId: input.installationId, removed },
+        'Disabled push device'
+      )
+      return removed
+    })
   }
 }
 
@@ -75,14 +111,33 @@ export class HandleMessageSentEventUseCase {
       (recipientId) => recipientId && recipientId !== event.senderId
     )
 
+    logger.info(
+      {
+        eventId: event.eventId,
+        messageId: event.messageId,
+        conversationId: event.conversationId,
+        senderId: event.senderId,
+        recipientCount: recipients.length
+      },
+      'Handling messaging.message.sent notification event'
+    )
+
     for (const userId of recipients) {
       const settings = await this.repository.getNotificationSettings(userId)
       if (!settings.directMessagesEnabled) {
+        logger.info(
+          { eventId: event.eventId, userId },
+          'Skipping notification delivery because direct-message alerts are disabled'
+        )
         continue
       }
 
       const devices = await this.repository.listActivePushDevices(userId)
       if (devices.length === 0) {
+        logger.info(
+          { eventId: event.eventId, userId },
+          'Skipping notification delivery because no active devices are registered'
+        )
         continue
       }
 
@@ -104,6 +159,10 @@ export class HandleMessageSentEventUseCase {
       }
 
       if (claimedDevices.length === 0) {
+        logger.info(
+          { eventId: event.eventId, userId, deviceCount: devices.length },
+          'Skipping notification delivery because all candidate devices were already claimed'
+        )
         continue
       }
 
@@ -119,6 +178,17 @@ export class HandleMessageSentEventUseCase {
               conversationId: event.conversationId
             }
           }))
+        )
+
+        logger.info(
+          {
+            eventId: event.eventId,
+            userId,
+            claimedDeviceCount: claimedDevices.length,
+            okCount: receipts.filter((receipt) => receipt.status === 'ok').length,
+            errorCount: receipts.filter((receipt) => receipt.status === 'error').length
+          },
+          'Sent Expo push batch'
         )
 
         await Promise.all(
@@ -146,6 +216,15 @@ export class HandleMessageSentEventUseCase {
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Expo push send failed'
+        logger.error(
+          {
+            err: error,
+            eventId: event.eventId,
+            userId,
+            claimedDeviceCount: claimedDevices.length
+          },
+          'Expo push send failed'
+        )
         await Promise.all(
           claimedDevices.map((device) =>
             this.repository.markMessageDeliveryFailed({
