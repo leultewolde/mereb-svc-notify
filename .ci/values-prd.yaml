@@ -9,9 +9,6 @@ deploymentStrategy:
 configMap:
   data:
     PORT: "4005"
-    KAFKA_BROKERS: platform-prd-redpanda-0.platform-prd-redpanda.platform-prd.svc.cluster.local:9092,platform-prd-redpanda-1.platform-prd-redpanda.platform-prd.svc.cluster.local:9092,platform-prd-redpanda-2.platform-prd-redpanda.platform-prd.svc.cluster.local:9092
-    KAFKA_SSL: "true"
-    KAFKA_SSL_INSECURE: "true"
     OIDC_AUDIENCE: account
     SPLUNK_HEC_URL: https://splunk-hec.mereb.app/services/collector/event
     SPLUNK_HEC_INDEX: logs-prd
