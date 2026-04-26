@@ -2,8 +2,7 @@ import assert from 'node:assert/strict'
 import { beforeEach, test, vi } from 'vitest'
 
 const sharedPackagesMocks = vi.hoisted(() => ({
-  ensureTopicExists: vi.fn(),
-  createConsumer: vi.fn(),
+  startConsumer: vi.fn(),
   logger: {
     warn: vi.fn(),
     error: vi.fn(),
@@ -13,8 +12,7 @@ const sharedPackagesMocks = vi.hoisted(() => ({
 
 vi.mock('@mereb/shared-packages', () => ({
   buildKafkaConfigFromEnv: vi.fn(),
-  createConsumer: sharedPackagesMocks.createConsumer,
-  ensureTopicExists: sharedPackagesMocks.ensureTopicExists,
+  startConsumer: sharedPackagesMocks.startConsumer,
   createLogger: vi.fn(() => sharedPackagesMocks.logger)
 }))
 
@@ -26,70 +24,51 @@ beforeEach(() => {
   delete process.env.KAFKA_TOPIC_MESSAGING_MESSAGE_SENT
 })
 
-test('returns null when Kafka is not configured', async () => {
+test('passes null kafkaConfig through to startConsumer', async () => {
+  sharedPackagesMocks.startConsumer.mockResolvedValue(null)
   const handler = { execute: vi.fn() }
 
-  const consumer = await startMessageSentConsumer(
-    null,
-    handler as never
-  )
+  const consumer = await startMessageSentConsumer(null, handler as never)
 
   assert.equal(consumer, null)
-  assert.equal(sharedPackagesMocks.logger.warn.mock.calls.length, 1)
+  assert.equal(sharedPackagesMocks.startConsumer.mock.calls.length, 1)
+  const call = sharedPackagesMocks.startConsumer.mock.calls[0][0]
+  assert.equal(call.kafkaConfig, null)
 })
 
-test('starts the consumer and processes valid message events', async () => {
-  const subscribe = vi.fn().mockResolvedValue(undefined)
-  const run = vi.fn().mockResolvedValue(undefined)
-  sharedPackagesMocks.createConsumer.mockResolvedValue({ subscribe, run })
-
+test('starts consumer with correct topic, group, and parser, and dispatches handler', async () => {
+  const fakeConsumer = { subscribe: vi.fn(), run: vi.fn() }
+  sharedPackagesMocks.startConsumer.mockResolvedValue(fakeConsumer)
   const handler = { execute: vi.fn().mockResolvedValue(undefined) }
   const kafkaConfig = { brokers: ['localhost:9092'] }
 
-  const consumer = await startMessageSentConsumer(
-    kafkaConfig as never,
-    handler as never
+  const consumer = await startMessageSentConsumer(kafkaConfig as never, handler as never)
+
+  assert.deepEqual(consumer, fakeConsumer)
+  const call = sharedPackagesMocks.startConsumer.mock.calls[0][0]
+  assert.equal(call.kafkaConfig, kafkaConfig)
+  assert.equal(call.topic, 'messaging.message.sent.v1')
+  assert.equal(call.consumerGroup, 'svc-notify-message-sent')
+
+  const parsed = call.parse(
+    JSON.stringify({
+      event_id: 'evt-1',
+      data: {
+        message_id: 'msg-1',
+        conversation_id: 'conv-1',
+        sender_id: 'sender-1',
+        recipient_ids: ['recipient-1', 'recipient-2']
+      }
+    })
   )
 
-  assert.deepEqual(consumer, { subscribe, run })
-  assert.deepEqual(sharedPackagesMocks.ensureTopicExists.mock.calls[0], [
-    kafkaConfig,
-    'messaging.message.sent.v1',
-    1,
-    1
-  ])
-  assert.deepEqual(sharedPackagesMocks.createConsumer.mock.calls[0], [
-    kafkaConfig,
-    'svc-notify-message-sent'
-  ])
-  assert.deepEqual(subscribe.mock.calls[0], [
-    { topic: 'messaging.message.sent.v1', fromBeginning: false }
-  ])
-  assert.equal(sharedPackagesMocks.logger.info.mock.calls.length, 1)
-
-  const eachMessage = run.mock.calls[0][0].eachMessage as (input: {
-    message: { value?: Buffer; offset: string }
-    partition: number
-    topic: string
-  }) => Promise<void>
-
-  await eachMessage({
+  await call.handle({
     topic: 'messaging.message.sent.v1',
     partition: 0,
-    message: {
-      offset: '1',
-      value: Buffer.from(
-        JSON.stringify({
-          event_id: 'evt-1',
-          data: {
-            message_id: 'msg-1',
-            conversation_id: 'conv-1',
-            sender_id: 'sender-1',
-            recipient_ids: ['recipient-1', 'recipient-2']
-          }
-        })
-      )
-    }
+    offset: '1',
+    value: '',
+    parsed,
+    consumerGroup: 'svc-notify-message-sent'
   })
 
   assert.deepEqual(handler.execute.mock.calls[0][0], {
@@ -101,58 +80,9 @@ test('starts the consumer and processes valid message events', async () => {
   })
 })
 
-test('worker skips empty messages and logs malformed or failed events', async () => {
-  const subscribe = vi.fn().mockResolvedValue(undefined)
-  const run = vi.fn().mockResolvedValue(undefined)
-  sharedPackagesMocks.createConsumer.mockResolvedValue({ subscribe, run })
-
-  const handler = {
-    execute: vi.fn().mockRejectedValue(new Error('handler failed'))
-  }
-
-  await startMessageSentConsumer({ brokers: ['localhost:9092'] } as never, handler as never)
-
-  const eachMessage = run.mock.calls[0][0].eachMessage as (input: {
-    message: { value?: Buffer; offset: string }
-    partition: number
-    topic: string
-  }) => Promise<void>
-
-  await eachMessage({
-    topic: 'messaging.message.sent.v1',
-    partition: 0,
-    message: {
-      offset: '2',
-      value: undefined
-    }
-  })
-  await eachMessage({
-    topic: 'messaging.message.sent.v1',
-    partition: 0,
-    message: {
-      offset: '3',
-      value: Buffer.from('not-json')
-    }
-  })
-  await eachMessage({
-    topic: 'messaging.message.sent.v1',
-    partition: 0,
-    message: {
-      offset: '4',
-      value: Buffer.from(
-        JSON.stringify({
-          event_id: 'evt-2',
-          data: {
-            message_id: 'msg-2',
-            conversation_id: 'conv-2',
-            sender_id: 'sender-2',
-            recipient_ids: ['recipient-3']
-          }
-        })
-      )
-    }
-  })
-
-  assert.equal(sharedPackagesMocks.logger.warn.mock.calls.length, 1)
-  assert.equal(sharedPackagesMocks.logger.error.mock.calls.length, 2)
+test('parser throws on malformed JSON (shared runner handles error logging)', async () => {
+  sharedPackagesMocks.startConsumer.mockResolvedValue({})
+  await startMessageSentConsumer({ brokers: ['localhost:9092'] } as never, { execute: vi.fn() } as never)
+  const call = sharedPackagesMocks.startConsumer.mock.calls[0][0]
+  assert.throws(() => call.parse('not-json'))
 })

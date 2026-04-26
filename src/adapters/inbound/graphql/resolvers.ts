@@ -1,13 +1,12 @@
 import type { IResolvers } from '@graphql-tools/utils'
+import { mapInstanceofToGraphQLError } from '@mereb/shared-packages'
 import type { GraphQLContext } from '../../../context.js'
 import { AuthenticationRequiredError, type NotifyApplicationModule } from '../../../application/notify/use-cases.js'
 
 function toGraphQLError(error: unknown): never {
-  if (error instanceof AuthenticationRequiredError) {
-    throw new Error(error.message)
-  }
-
-  throw error
+  mapInstanceofToGraphQLError(error, [
+    [AuthenticationRequiredError, (e) => e.message]
+  ])
 }
 
 export function createResolvers(
